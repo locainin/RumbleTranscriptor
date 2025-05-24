@@ -1,0 +1,4 @@
+git+https://github.com/openai/whisper.git
+yt-dlp
+PyQt5
+torch>=1.12.1
