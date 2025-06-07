@@ -3,6 +3,8 @@ import os
 import yt_dlp
 import whisper
 import json
+import tempfile
+import subprocess
 
 def download_video(url, output_dir, download_format_details):
     os.makedirs(output_dir, exist_ok=True)
@@ -99,7 +101,8 @@ def download_video(url, output_dir, download_format_details):
     return downloaded_file_actual_path
 
 
-def transcribe(audio_path, model_name='medium', lang='English', formats=None, verbose_transcription=False):
+def transcribe(audio_path, model_name='medium', lang='English', formats=None,
+               verbose_transcription=False, start_time=None, end_time=None):
     if not formats:
         formats = ["txt"]
     
@@ -111,7 +114,37 @@ def transcribe(audio_path, model_name='medium', lang='English', formats=None, ve
         raise RuntimeError(f"Failed to load Whisper model '{model_name}'. Error: {e}")
     print(f"Model '{model_name}' loaded. Starting transcription for: {audio_path}")
 
-    result = model.transcribe(audio_path, language=lang, verbose=verbose_transcription)
+    audio_to_use = audio_path
+    temp_segment = None
+    if start_time is not None or end_time is not None:
+        # extract portion of media using ffmpeg
+        start = float(start_time or 0)
+        end = float(end_time) if end_time is not None else None
+        if end is not None and end <= start:
+            raise ValueError("end_time must be greater than start_time")
+        suffix = os.path.splitext(audio_path)[1]
+        temp_fd, temp_segment = tempfile.mkstemp(suffix=suffix)
+        os.close(temp_fd)
+        ff_cmd = [
+            "ffmpeg",
+            "-y",
+            "-ss",
+            str(start),
+            "-i",
+            audio_path,
+        ]
+        if end is not None:
+            ff_cmd += ["-t", str(end - start)]
+        ff_cmd += ["-c", "copy", temp_segment]
+        try:
+            subprocess.run(ff_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            audio_to_use = temp_segment
+        except subprocess.CalledProcessError as e:
+            if temp_segment and os.path.exists(temp_segment):
+                os.remove(temp_segment)
+            raise RuntimeError(f"Failed to extract media segment: {e}")
+
+    result = model.transcribe(audio_to_use, language=lang, verbose=verbose_transcription)
     segments = result.get('segments', [])
     print("Transcription complete.")
 
@@ -142,6 +175,8 @@ def transcribe(audio_path, model_name='medium', lang='English', formats=None, ve
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2, ensure_ascii=False)
         outputs.append(json_path)
+    if temp_segment and os.path.exists(temp_segment):
+        os.remove(temp_segment)
     return outputs
 
 def format_timestamp(seconds_float, always_include_hours=False, decimal_marker=','):
