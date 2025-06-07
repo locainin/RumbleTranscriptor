@@ -36,7 +36,8 @@ class WorkerThread(QThread):
     finished = pyqtSignal(list)
     error = pyqtSignal(str)
 
-    def __init__(self, url, outdir, formats, model_name, keep_video_setting, download_format_details):
+    def __init__(self, url, outdir, formats, model_name, keep_video_setting,
+                 download_format_details, start_time=None, end_time=None, local_file=None):
         super().__init__()
         self.url = url
         self.outdir = outdir
@@ -44,30 +45,43 @@ class WorkerThread(QThread):
         self.model_name = model_name
         self.keep_video = keep_video_setting
         self.download_format_details = download_format_details
+        self.start_time = start_time
+        self.end_time = end_time
+        self.local_file = local_file
 
     def run(self):
         try:
-            self.progress.emit("Downloading media...")
-            for i in range(1, 3):
-                self.transcription_progress.emit(i, 5)
-                QThread.msleep(100)
-
-            video_file_path = main.download_video(self.url, self.outdir, self.download_format_details)
-            self.transcription_progress.emit(2,5)
+            if self.local_file:
+                video_file_path = self.local_file
+                self.progress.emit("Using provided local file...")
+                self.transcription_progress.emit(1,5)
+            else:
+                self.progress.emit("Downloading media...")
+                for i in range(1, 3):
+                    self.transcription_progress.emit(i, 5)
+                    QThread.msleep(100)
+                video_file_path = main.download_video(self.url, self.outdir, self.download_format_details)
+                self.transcription_progress.emit(2,5)
 
             self.progress.emit(f"Loading/verifying Whisper model: '{self.model_name}'...")
             QThread.msleep(200)
             self.transcription_progress.emit(3,5)
 
             self.progress.emit(f"Transcribing with '{self.model_name}' model...")
-            results = main.transcribe(video_file_path, model_name=self.model_name, formats=self.formats)
+            results = main.transcribe(
+                video_file_path,
+                model_name=self.model_name,
+                formats=self.formats,
+                start_time=self.start_time,
+                end_time=self.end_time,
+            )
             self.transcription_progress.emit(4,5)
             QThread.msleep(200)
             self.transcription_progress.emit(5,5)
 
             self.finished.emit(results)
             
-            if not self.keep_video:
+            if not self.keep_video and not self.local_file:
                 self.progress.emit(f"Keep media setting is OFF. Attempting to delete: {video_file_path}")
                 if os.path.exists(video_file_path):
                     try:
@@ -158,6 +172,21 @@ class RumbleTranscriber(QWidget):
         self.url_input.setPlaceholderText("Paste Rumble video URL here…")
         self.main_layout.addWidget(self.url_input)
 
+        self.main_layout.addWidget(QLabel("Or Select Local File:"))
+        self.file_btn = QPushButton("Choose Local File")
+        self.file_btn.clicked.connect(self.pick_file)
+        self.main_layout.addWidget(self.file_btn)
+        self.selected_file_label = QLabel("Local File: None")
+        self.main_layout.addWidget(self.selected_file_label)
+
+        self.main_layout.addWidget(QLabel("Start Time (HH:MM:SS or seconds, optional):"))
+        self.start_time_input = QLineEdit(self)
+        self.main_layout.addWidget(self.start_time_input)
+
+        self.main_layout.addWidget(QLabel("End Time (HH:MM:SS or seconds, optional):"))
+        self.end_time_input = QLineEdit(self)
+        self.main_layout.addWidget(self.end_time_input)
+
         self.main_layout.addWidget(QLabel("Output Folder:"))
         self.outdir_btn = QPushButton("Select Output Folder")
         self.outdir_btn.clicked.connect(self.pick_dir)
@@ -213,6 +242,7 @@ class RumbleTranscriber(QWidget):
         self.main_layout.addWidget(self.progress_bar)
 
         self.selected_dir = None
+        self.local_file_path = None
 
     def apply_styles(self):
         # Corrected QSS: Removed the line that caused the NameError.
@@ -272,14 +302,44 @@ class RumbleTranscriber(QWidget):
             except:
                 self.outdir_btn.setText(f"Output: {self.selected_dir}")
 
+    def pick_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select media file")
+        if file_path:
+            self.local_file_path = file_path
+            self.selected_file_label.setText(f"Local File: {os.path.basename(file_path)}")
+            try:
+                self.file_btn.setText(f"File: .../{os.path.basename(file_path)}")
+            except Exception:
+                self.file_btn.setText(f"File: {self.local_file_path}")
+        else:
+            self.local_file_path = None
+            self.selected_file_label.setText("Local File: None")
+            self.file_btn.setText("Choose Local File")
+
+    def parse_time(self, text):
+        if not text:
+            return None
+        try:
+            parts = [float(p) for p in text.split(":")]
+            if len(parts) == 1:
+                return parts[0]
+            elif len(parts) == 2:
+                return parts[0]*60 + parts[1]
+            elif len(parts) == 3:
+                return parts[0]*3600 + parts[1]*60 + parts[2]
+        except ValueError:
+            return None
+        return None
+
     def open_settings_dialog(self):
         dialog = SettingsDialog(self)
         dialog.exec_()
 
     def run_job(self):
         url = self.url_input.text().strip()
-        if not url:
-            QMessageBox.warning(self, "Input Error", "URL is required.")
+        local_file = getattr(self, 'local_file_path', None)
+        if not url and not local_file:
+            QMessageBox.warning(self, "Input Error", "Provide a URL or select a local file.")
             return
         if not self.selected_dir:
             QMessageBox.warning(self, "Input Error", "Output folder is required.")
@@ -309,12 +369,28 @@ class RumbleTranscriber(QWidget):
              download_format_details = DOWNLOAD_FORMAT_OPTIONS[next(iter(DOWNLOAD_FORMAT_OPTIONS))]
 
 
+        start_time = self.parse_time(self.start_time_input.text().strip())
+        end_time = self.parse_time(self.end_time_input.text().strip())
+        if start_time is not None and end_time is not None and end_time <= start_time:
+            QMessageBox.warning(self, "Input Error", "End time must be greater than start time.")
+            return
+
         self.go_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.progress_status_label.setText("Processing...")
 
-        self.worker = WorkerThread(url, self.selected_dir, formats, selected_model_key, keep_video_setting, download_format_details)
+        self.worker = WorkerThread(
+            url,
+            self.selected_dir,
+            formats,
+            selected_model_key,
+            keep_video_setting,
+            download_format_details,
+            start_time=start_time,
+            end_time=end_time,
+            local_file=local_file,
+        )
         self.worker.progress.connect(self.update_status_message)
         self.worker.transcription_progress.connect(self.update_progress_bar)
         self.worker.finished.connect(self.done)
