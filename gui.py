@@ -2,12 +2,17 @@
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QLabel, QLineEdit,
     QPushButton, QFileDialog, QCheckBox, QHBoxLayout, QMessageBox, QProgressBar,
-    QComboBox, QMenuBar, QAction, QDialog, QSpacerItem, QSizePolicy, QFormLayout
+    QComboBox, QMenuBar, QAction, QDialog, QSpacerItem, QSizePolicy, QFormLayout,
+    QFrame, QStyle, QGraphicsDropShadowEffect, QLayout
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSettings
 import main # Uses main.py
 import sys
 import os # For os.path.basename in pick_dir
+
+# Application identity used by QSettings
+ORG_NAME = "YourOrgName"
+APP_NAME = "RumbleTranscriber"
 
 MODEL_DESCRIPTIONS = {
     "tiny":      "Tiny        | ~39M params  | Fastest, lowest accuracy, low VRAM",
@@ -17,9 +22,13 @@ MODEL_DESCRIPTIONS = {
     "large-v1":  "Large v1    | ~1.55B params| Slowest, highest accuracy, very high VRAM",
     "large-v2":  "Large v2    | ~1.55B params| Updated large model, similar requirements",
     "large-v3":  "Large v3    | ~1.55B params| Latest large model, best official accuracy",
-    "turbo":     "Turbo (User)| ~809M params | User-specified 'turbo' model"
+    "turbo":     "Turbo       | ~809M params | Fast model variant",
 }
+# Default to turbo per app docs
 DEFAULT_MODEL_KEY = "turbo"
+
+# Defaults
+DEFAULT_OUTPUT_FORMATS = ["txt"]
 
 DOWNLOAD_FORMAT_OPTIONS = {
     "Audio: MP3 (Best Quality)": {"format_id": "mp3_best", "postprocessor_needed": True, "preferredcodec": "mp3", "output_ext": "mp3"},
@@ -104,7 +113,7 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Application Settings")
         self.setMinimumWidth(450)
         
-        self.settings = QSettings("YourOrgName", "RumbleTranscriber")
+        self.settings = QSettings(ORG_NAME, APP_NAME)
         
         form_layout = QFormLayout(self)
 
@@ -123,6 +132,32 @@ class SettingsDialog(QDialog):
         self.download_format_combo.setCurrentIndex(default_dl_idx)
         form_layout.addRow(self.download_format_label, self.download_format_combo)
 
+        # Whisper model selection
+        self.model_label = QLabel("Default Whisper Model:")
+        self.model_combo = QComboBox()
+        current_model_key = self.settings.value("modelKey", DEFAULT_MODEL_KEY, type=str)
+        model_default_idx = 0
+        for idx, (key, desc) in enumerate(MODEL_DESCRIPTIONS.items()):
+            self.model_combo.addItem(desc, key)
+            if key == current_model_key:
+                model_default_idx = idx
+        self.model_combo.setCurrentIndex(model_default_idx)
+        form_layout.addRow(self.model_label, self.model_combo)
+
+        # Output formats selection
+        self.output_formats_label = QLabel("Transcript Formats:")
+        self.output_formats_container = QWidget()
+        of_layout = QHBoxLayout(self.output_formats_container)
+        self.output_format_boxes = {}
+        for fmt in ["txt", "srt", "vtt", "tsv", "json"]:
+            cb = QCheckBox(fmt.upper())
+            self.output_format_boxes[fmt] = cb
+            of_layout.addWidget(cb)
+        saved_formats = self._load_output_formats()
+        for fmt, cb in self.output_format_boxes.items():
+            cb.setChecked(fmt in saved_formats)
+        form_layout.addRow(self.output_formats_label, self.output_formats_container)
+
         button_layout = QHBoxLayout()
         spacer = QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum)
         button_layout.addSpacerItem(spacer)
@@ -140,20 +175,45 @@ class SettingsDialog(QDialog):
         self.settings.setValue("keepVideo", self.keep_video_checkbox.isChecked())
         selected_dl_format_id = self.download_format_combo.currentData()
         self.settings.setValue("downloadFormatID", selected_dl_format_id)
+        self.settings.setValue("modelKey", self.model_combo.currentData())
+        selected_formats = [f for f, cb in self.output_format_boxes.items() if cb.isChecked()]
+        if not selected_formats:
+            selected_formats = DEFAULT_OUTPUT_FORMATS
+        self._save_output_formats(selected_formats)
         self.accept()
+
+    def _load_output_formats(self):
+        value = self.settings.value("outputFormats", ",".join(DEFAULT_OUTPUT_FORMATS), type=str)
+        if isinstance(value, str):
+            items = [v.strip().lower() for v in value.split(",") if v.strip()]
+        elif isinstance(value, (list, tuple)):
+            items = [str(v).strip().lower() for v in value]
+        else:
+            items = list(DEFAULT_OUTPUT_FORMATS)
+        if 'all' in items:
+            return ["txt", "srt", "vtt", "tsv", "json"]
+        return items or list(DEFAULT_OUTPUT_FORMATS)
+
+    def _save_output_formats(self, formats_list):
+        safe = [f for f in formats_list if f in ["txt", "srt", "vtt", "tsv", "json"]]
+        self.settings.setValue("outputFormats", ",".join(safe))
 
 class RumbleTranscriber(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Rumble Transcript Extractor")
-        self.setMinimumWidth(750)
-        self.setMinimumHeight(550)
-        self.settings = QSettings("YourOrgName", "RumbleTranscriber")
+        # Cap minimum size so layout never crushes
+        self.setMinimumSize(900, 620)
+        self.settings = QSettings(ORG_NAME, APP_NAME)
         self.init_ui()
         self.apply_styles()
 
     def init_ui(self):
         self.main_layout = QVBoxLayout(self)
+        # Prevent resizing below minimum effective layout hint
+        self.main_layout.setSizeConstraint(QLayout.SetMinimumSize)
+        self.main_layout.setContentsMargins(24, 18, 24, 18)
+        self.main_layout.setSpacing(16)
 
         menubar = QMenuBar(self)
         self.main_layout.setMenuBar(menubar)
@@ -167,140 +227,237 @@ class RumbleTranscriber(QWidget):
         exit_action.triggered.connect(self.close)
         settings_menu.addAction(exit_action)
 
-        self.main_layout.addWidget(QLabel("Rumble Video URL:"))
+        # Shortcuts
+        act_open_file = QAction('Choose Local File', self)
+        act_open_file.setShortcut('Ctrl+O')
+        act_open_file.triggered.connect(self.pick_file)
+        self.addAction(act_open_file)
+        act_open_dir = QAction('Select Output Folder', self)
+        act_open_dir.setShortcut('Ctrl+Shift+O')
+        act_open_dir.triggered.connect(self.pick_dir)
+        self.addAction(act_open_dir)
+
+        # Header
+        header = QLabel("Transcribe Rumble videos with Whisper")
+        header.setAlignment(Qt.AlignHCenter)
+        header.setObjectName('headerTitle')
+        header.setWordWrap(True)
+        self.main_layout.addWidget(header)
+
+        # Input card
+        input_card, input_layout = self._make_card()
+        title1 = QLabel("Rumble Video URL")
+        title1.setWordWrap(True)
+        input_layout.addWidget(title1)
         self.url_input = QLineEdit(self)
         self.url_input.setPlaceholderText("Paste Rumble video URL here…")
-        self.main_layout.addWidget(self.url_input)
+        self.url_input.returnPressed.connect(self.run_job)
+        input_layout.addWidget(self.url_input)
 
-        self.main_layout.addWidget(QLabel("Or Select Local File:"))
+        file_row = QHBoxLayout()
         self.file_btn = QPushButton("Choose Local File")
+        self.file_btn.setIcon(self.style().standardIcon(QStyle.SP_DialogOpenButton))
         self.file_btn.clicked.connect(self.pick_file)
-        self.main_layout.addWidget(self.file_btn)
+        file_row.addWidget(self.file_btn)
         self.selected_file_label = QLabel("Local File: None")
-        self.main_layout.addWidget(self.selected_file_label)
+        self.selected_file_label.setObjectName('mutedLabel')
+        self.selected_file_label.setWordWrap(True)
+        file_row.addWidget(self.selected_file_label, 1)
+        input_layout.addLayout(file_row)
 
-        self.main_layout.addWidget(QLabel("Start Time (HH:MM:SS or seconds, optional):"))
+        # Advanced options (collapsed)
+        self.advanced_toggle = QPushButton("Advanced Options ▸")
+        self.advanced_toggle.setObjectName('toggleButton')
+        self.advanced_toggle.setCheckable(True)
+        self.advanced_toggle.setChecked(False)
+        self.advanced_toggle.toggled.connect(self._update_advanced_toggle_label)
+
+        adv_card, adv_layout = self._make_card()
+        lbl_start = QLabel("Start Time (HH:MM:SS or seconds)")
+        lbl_start.setWordWrap(True)
+        adv_layout.addWidget(lbl_start)
         self.start_time_input = QLineEdit(self)
-        self.main_layout.addWidget(self.start_time_input)
-
-        self.main_layout.addWidget(QLabel("End Time (HH:MM:SS or seconds, optional):"))
+        self.start_time_input.setPlaceholderText("e.g., 00:01:30 or 90")
+        adv_layout.addWidget(self.start_time_input)
+        lbl_end = QLabel("End Time (HH:MM:SS or seconds)")
+        lbl_end.setWordWrap(True)
+        adv_layout.addWidget(lbl_end)
         self.end_time_input = QLineEdit(self)
-        self.main_layout.addWidget(self.end_time_input)
+        self.end_time_input.setPlaceholderText("e.g., 00:03:00 or 180")
+        adv_layout.addWidget(self.end_time_input)
+        adv_card.setVisible(False)
+        self.advanced_toggle.toggled.connect(adv_card.setVisible)
 
-        self.main_layout.addWidget(QLabel("Output Folder:"))
+        # Output card
+        out_card, out_layout = self._make_card()
+        self.out_title_label = QLabel("Output Folder")
+        self.out_title_label.setWordWrap(True)
+        out_layout.addWidget(self.out_title_label)
+        out_row = QHBoxLayout()
         self.outdir_btn = QPushButton("Select Output Folder")
+        self.outdir_btn.setIcon(self.style().standardIcon(QStyle.SP_DirIcon))
         self.outdir_btn.clicked.connect(self.pick_dir)
-        self.main_layout.addWidget(self.outdir_btn)
-        self.selected_dir_label = QLabel("Output Folder: Not selected")
-        self.main_layout.addWidget(self.selected_dir_label)
+        out_row.addWidget(self.outdir_btn)
+        out_layout.addLayout(out_row)
 
-        self.main_layout.addWidget(QLabel("Whisper Model:"))
-        self.model_combo = QComboBox(self)
-        default_item_index = 0
-        found_default = False
-        for index, (key, full_description) in enumerate(MODEL_DESCRIPTIONS.items()):
-            self.model_combo.addItem(full_description, key)
-            if key == DEFAULT_MODEL_KEY:
-                default_item_index = index
-                found_default = True
-        
-        if found_default:
-            self.model_combo.setCurrentIndex(default_item_index)
-        elif self.model_combo.count() > 0:
-            self.model_combo.setCurrentIndex(0)
-            
-        self.main_layout.addWidget(self.model_combo)
+        # Arrange input and output cards side-by-side for a more horizontal feel
+        content_row = QHBoxLayout()
+        content_row.setSpacing(16)
+        content_row.addWidget(input_card, 1)
+        content_row.addWidget(out_card, 1)
+        self.main_layout.addLayout(content_row)
 
-        self.main_layout.addWidget(QLabel("Output Formats:"))
-        self.format_checkboxes = {}
-        formats_to_show = ['txt', 'srt', 'vtt', 'tsv', 'json', 'all']
-        checkbox_container = QWidget()
-        checkbox_layout = QHBoxLayout(checkbox_container)
-        for fmt in formats_to_show:
-            box = QCheckBox(fmt.upper())
-            checkbox_layout.addWidget(box)
-            self.format_checkboxes[fmt] = box
-        self.main_layout.addWidget(checkbox_container)
+        # Now add Advanced toggle and card beneath the row
+        self.main_layout.addWidget(self.advanced_toggle)
+        self.main_layout.addWidget(adv_card)
 
-        self.main_layout.addSpacerItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding))
-
+        # Spacer and primary action
+        self.main_layout.addSpacerItem(QSpacerItem(20, 10, QSizePolicy.Minimum, QSizePolicy.Expanding))
         self.go_btn = QPushButton("Extract & Transcribe")
-        self.go_btn.setFixedHeight(45)
+        self.go_btn.setObjectName('primaryButton')
+        self.go_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+        self.go_btn.setFixedHeight(48)
         self.go_btn.clicked.connect(self.run_job)
         self.main_layout.addWidget(self.go_btn)
 
+        # Status and progress
         self.progress_status_label = QLabel('Status: Ready')
+        self.progress_status_label.setObjectName('mutedLabel')
+        self.progress_status_label.setWordWrap(True)
         self.main_layout.addWidget(self.progress_status_label)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setMinimum(0)
         self.progress_bar.setMaximum(5)
         self.progress_bar.setValue(0)
-        self.progress_bar.setTextVisible(True)
-        self.progress_bar.setFormat('%p% - %v/%m steps')
+        self.progress_bar.setTextVisible(False)
         self.progress_bar.setVisible(False)
         self.main_layout.addWidget(self.progress_bar)
 
         self.selected_dir = None
         self.local_file_path = None
 
+    def _make_card(self):
+        container = QWidget()
+        container.setProperty('card', True)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+        # Subtle shadow
+        shadow = QGraphicsDropShadowEffect(container)
+        shadow.setBlurRadius(20)
+        shadow.setXOffset(0)
+        shadow.setYOffset(4)
+        shadow.setColor(Qt.black)
+        container.setGraphicsEffect(shadow)
+        # Make cards expand horizontally but keep minimal vertical height
+        container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        return container, layout
+
     def apply_styles(self):
-        # Corrected QSS: Removed the line that caused the NameError.
-        # The checkbox will rely on background color change and possibly native checkmark.
-        self.setStyleSheet(f"""
-            QWidget {{
-                background-color: #1E1E1E; color: #D4D4D4;
-                font-size: 15px; font-family: 'Fira Mono', 'Consolas', 'DejaVu Sans Mono', monospace;
+        # App-wide stylesheet: dark, clean, modern
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #111315; color: #E6E6E6;
+                font-size: 15px; font-family: 'Inter', 'SF Pro Text', 'Segoe UI', 'Roboto', 'DejaVu Sans', sans-serif;
                 border: none;
-            }}
-            QMenuBar {{ background-color: #2D2D2D; color: #00ACC1; border-bottom: 1px solid #007A8A; }}
-            QMenuBar::item {{ background-color: #2D2D2D; color: #00ACC1; padding: 5px 10px; }}
-            QMenuBar::item:selected {{ background-color: #00ACC1; color: #1E1E1E; }}
-            QMenu {{ background-color: #2D2D2D; color: #00ACC1; border: 1px solid #007A8A; }}
-            QMenu::item:selected {{ background-color: #00ACC1; color: #1E1E1E; }}
-            QLabel {{ margin-top: 7px; margin-bottom: 3px; color: #4DB6AC; font-weight: normal; qproperty-alignment: 'AlignCenter';}}
-            QLineEdit {{
-                background: #252526; border: 1px solid #007A8A; color: #D4D4D4;
-                padding: 7px; border-radius: 2px; font-size: 14px;
-                selection-background-color: #007A8A; selection-color: #FFFFFF;
-            }}
-            QLineEdit:focus {{ border: 1px solid #4DB6AC; }}
-            QPushButton {{
-                background-color: #333333; color: #4DB6AC; border: 1px solid #4DB6AC;
-                padding: 8px 18px; border-radius: 3px; font-weight: bold; text-transform: none;
-            }}
-            QPushButton:hover {{ background-color: #4DB6AC; color: #1E1E1E; border: 1px solid #1E1E1E; }}
-            QPushButton:pressed {{ background-color: #007A8A; color: #FFFFFF; }}
-            QCheckBox {{ spacing: 8px; color: #B0BEC5; font-size: 14px; margin-right: 12px; }}
-            QCheckBox::indicator {{ width: 18px; height: 18px; border: 1px solid #4DB6AC; border-radius: 2px; background-color: #252526; }}
-            QCheckBox::indicator:checked {{
-                background-color: #4DB6AC; /* Background color changes on check */
-            }}
-            QCheckBox::indicator:hover {{ border: 1px solid #00ACC1; }}
-            QComboBox {{
-                background: #252526; border: 1px solid #007A8A; padding: 7px;
-                color: #D4D4D4; border-radius: 2px; selection-background-color: #007A8A;
-            }}
-            QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: top right; width: 22px; border-left: 1px solid #007A8A; }}
-            QComboBox QAbstractItemView {{ background-color: #2D2D2D; border: 1px solid #007A8A; color: #D4D4D4; selection-background-color: #007A8A; selection-color: #FFFFFF; }}
-            QProgressBar {{
-                border: 1px solid #007A8A; border-radius: 2px; background-color: #252526;
-                text-align: center; color: #D4D4D4; height: 22px;
-            }}
-            QProgressBar::chunk {{ background-color: #4DB6AC; margin: 1px; }}
-            QDialog {{ background-color: #1E1E1E; border: 1px solid #007A8A; }}
-            QFormLayout QLabel {{ qproperty-alignment: 'AlignLeft'; }}
+            }
+            QLabel#headerTitle {
+                font-size: 20px; font-weight: 600; color: #F2F2F2; margin: 6px 0 2px 0;
+            }
+            QLabel { color: #B6C2CF; }
+            QLabel#mutedLabel { color: #94A3B8; }
+
+            QWidget[card="true"] {
+                background-color: #171A1D; border: 1px solid #262B31; border-radius: 10px;
+            }
+
+            QMenuBar { background-color: #0F1113; color: #9AD7FF; border: none; }
+            QMenuBar::item { padding: 6px 10px; background: transparent; border-radius: 6px; }
+            QMenuBar::item:selected { background-color: #3B82F6; color: #0B1220; }
+            QMenu { background-color: #171A1D; color: #D9E3EA; border: 1px solid #262B31; }
+            QMenu::item { padding: 6px 10px; }
+            QMenu::item:selected { background-color: #253349; color: #DDF3FF; }
+
+            QLineEdit {
+                background: #0F1113; border: 1px solid #2B323A; color: #E6E6E6;
+                padding: 9px 10px; border-radius: 8px; font-size: 14px;
+                selection-background-color: #2B5CFF; selection-color: #FFFFFF;
+            }
+            QLineEdit:focus { border: 1px solid #3B82F6; }
+
+            QPushButton {
+                background-color: #161A1E; color: #D9E3EA; border: 1px solid #2B323A;
+                padding: 10px 16px; border-radius: 8px; font-weight: 600;
+            }
+            QPushButton:hover { background-color: #1F242A; border-color: #3B82F6; }
+            QPushButton:pressed { background-color: #1A2027; }
+            QPushButton#primaryButton {
+                background-color: #3B82F6; border: 1px solid #3B82F6; color: #0B1220;
+            }
+            QPushButton#primaryButton:hover { background-color: #5B9CF8; border-color: #5B9CF8; }
+            QPushButton#primaryButton:pressed { background-color: #2F6BD6; }
+
+            QPushButton#toggleButton {
+                background: transparent; border: none; color: #9AD7FF; text-align: left;
+                padding: 4px 2px; font-weight: 600;
+            }
+            QPushButton#toggleButton:hover { color: #DDF3FF; }
+
+            /* Improve hover/selection cues in Settings dialog */
+            QCheckBox {
+                spacing: 8px; color: #D9E3EA; font-size: 14px; margin-right: 12px;
+                padding: 6px 10px; border-radius: 8px;
+            }
+            /* Hover state: strong blue like menu */
+            QCheckBox:hover { background-color: #3B82F6; color: #0B1220; }
+            /* Checked state: blue pill, but keep indicator dark with visible tick */
+            QCheckBox:checked { background-color: #3B82F6; color: #0B1220; }
+            QCheckBox::indicator {
+                width: 18px; height: 18px; border: 1px solid #2B323A; border-radius: 4px; background-color: #0F1113;
+            }
+            QCheckBox::indicator:hover { border-color: #3B82F6; }
+            QCheckBox::indicator:checked { background-color: #0F1113; border-color: #3B82F6; }
+            QComboBox:hover { border-color: #3B82F6; }
+            QComboBox::drop-down { width: 26px; border-left: 1px solid #2B323A; }
+            QComboBox QAbstractItemView {
+                background-color: #171A1D; color: #D9E3EA; border: 1px solid #2B323A;
+                selection-background-color: #3B82F6; selection-color: #0B1220;
+                outline: none;
+            }
+            QComboBox QAbstractItemView::item { padding: 6px 10px; }
+            /* Strong blue hover/selection to replace faint grey */
+            QComboBox QAbstractItemView::item:hover { background-color: #3B82F6; color: #0B1220; }
+            QComboBox QAbstractItemView::item:selected { background-color: #3B82F6; color: #0B1220; }
+            QComboBox::drop-down { width: 26px; border-left: 1px solid #2B323A; }
+            QComboBox QAbstractItemView {
+                background-color: #171A1D; color: #D9E3EA; border: 1px solid #2B323A;
+                selection-background-color: #253349; selection-color: #DDF3FF;
+                outline: none;
+            }
+            QComboBox QAbstractItemView::item { padding: 6px 10px; }
+            QComboBox QAbstractItemView::item:hover { background-color: #1F2937; }
+
+            QProgressBar {
+                border: 1px solid #262B31; border-radius: 6px; background-color: #0F1113;
+                height: 10px;
+            }
+            QProgressBar::chunk { background-color: #3B82F6; border-radius: 6px; }
+
+            QDialog { background-color: #111315; border: 1px solid #262B31; }
         """)
+
+    def _update_advanced_toggle_label(self, checked):
+        self.advanced_toggle.setText("Advanced Options ▾" if checked else "Advanced Options ▸")
 
     def pick_dir(self):
         dir_path = QFileDialog.getExistingDirectory(self, "Choose output directory")
         if dir_path:
             self.selected_dir = dir_path
-            self.selected_dir_label.setText(f"Output Folder: {self.selected_dir}")
-            try:
-                self.outdir_btn.setText(f"Output: .../{os.path.basename(dir_path)}")
-            except:
-                self.outdir_btn.setText(f"Output: {self.selected_dir}")
+            # Show concise path in the title area and switch button label to Change
+            shown = self._shorten_path(dir_path)
+            self.out_title_label.setText(shown)
+            self.outdir_btn.setText("Change Output Folder")
 
     def pick_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select media file")
@@ -315,6 +472,17 @@ class RumbleTranscriber(QWidget):
             self.local_file_path = None
             self.selected_file_label.setText("Local File: None")
             self.file_btn.setText("Choose Local File")
+
+    def _shorten_path(self, path_str, max_len=60):
+        if not path_str:
+            return ""
+        # If path is short, return as is
+        if len(path_str) <= max_len:
+            return path_str
+        # Otherwise, keep start and end segments
+        base = os.path.basename(path_str)
+        prefix = path_str[:max(0, max_len - len(base) - 5)]
+        return f"{prefix}…/{base}"
 
     def parse_time(self, text):
         if not text:
@@ -345,17 +513,17 @@ class RumbleTranscriber(QWidget):
             QMessageBox.warning(self, "Input Error", "Output folder is required.")
             return
         
-        selected_model_key = self.model_combo.currentData()
-        if not selected_model_key:
-            QMessageBox.critical(self, "Error", "Model selection is invalid.")
-            return
-
-        formats = [fmt for fmt, cb in self.format_checkboxes.items() if cb.isChecked()]
-        if not formats:
-            QMessageBox.warning(self, "Input Error", "At least one output format is required.")
-            return
+        # Read model and formats from Settings
+        selected_model_key = self.settings.value("modelKey", DEFAULT_MODEL_KEY, type=str)
+        formats_value = self.settings.value("outputFormats", ",".join(DEFAULT_OUTPUT_FORMATS), type=str)
+        if isinstance(formats_value, str):
+            formats = [v.strip().lower() for v in formats_value.split(',') if v.strip()]
+        else:
+            formats = [str(v).strip().lower() for v in (formats_value or [])]
         if 'all' in formats:
             formats = ['txt', 'srt', 'vtt', 'tsv', 'json']
+        if not formats:
+            formats = list(DEFAULT_OUTPUT_FORMATS)
 
         keep_video_setting = self.settings.value("keepVideo", True, type=bool)
         current_dl_format_id = self.settings.value("downloadFormatID", DEFAULT_DOWNLOAD_FORMAT_ID, type=str)
@@ -418,8 +586,8 @@ class RumbleTranscriber(QWidget):
 
 def run_gui_app():
     app = QApplication(sys.argv)
-    app.setOrganizationName("YourOrgName")
-    app.setApplicationName("RumbleTranscriber")
+    app.setOrganizationName(ORG_NAME)
+    app.setApplicationName(APP_NAME)
     win = RumbleTranscriber()
     win.show()
     sys.exit(app.exec_())
