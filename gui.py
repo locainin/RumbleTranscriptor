@@ -76,13 +76,18 @@ class WorkerThread(QThread):
             QThread.msleep(200)
             self.transcription_progress.emit(3,5)
 
-            self.progress.emit(f"Transcribing with '{self.model_name}' model...")
+            # Bridge Whisper's tqdm into our status label, showing only percent
+            def _on_whisper_progress(pct, n, total):
+                pct = int(pct or 0)
+                self.progress.emit(f"Transcribing with '{self.model_name}' model... {pct}%")
+
             results = main.transcribe(
                 video_file_path,
                 model_name=self.model_name,
                 formats=self.formats,
                 start_time=self.start_time,
                 end_time=self.end_time,
+                progress_callback=_on_whisper_progress,
             )
             self.transcription_progress.emit(4,5)
             QThread.msleep(200)
@@ -151,6 +156,7 @@ class SettingsDialog(QDialog):
         self.output_format_boxes = {}
         for fmt in ["txt", "srt", "vtt", "tsv", "json"]:
             cb = QCheckBox(fmt.upper())
+            cb.setObjectName('formatCheckbox')
             self.output_format_boxes[fmt] = cb
             of_layout.addWidget(cb)
         saved_formats = self._load_output_formats()
@@ -238,7 +244,7 @@ class RumbleTranscriber(QWidget):
         self.addAction(act_open_dir)
 
         # Header
-        header = QLabel("Transcribe Rumble videos with Whisper")
+        header = QLabel("Transcribe Rumble Videos With Whisper")
         header.setAlignment(Qt.AlignHCenter)
         header.setObjectName('headerTitle')
         header.setWordWrap(True)
@@ -417,26 +423,35 @@ class RumbleTranscriber(QWidget):
                 width: 18px; height: 18px; border: 1px solid #2B323A; border-radius: 4px; background-color: #0F1113;
             }
             QCheckBox::indicator:hover { border-color: #3B82F6; }
-            QCheckBox::indicator:checked { background-color: #0F1113; border-color: #3B82F6; }
+            /* General indicator when checked (non-format checkboxes) */
+            QCheckBox::indicator:checked { background-color: #3B82F6; border-color: #3B82F6; }
             QComboBox:hover { border-color: #3B82F6; }
             QComboBox::drop-down { width: 26px; border-left: 1px solid #2B323A; }
+            /* Popup list styling for both list and tree views */
             QComboBox QAbstractItemView {
                 background-color: #171A1D; color: #D9E3EA; border: 1px solid #2B323A;
                 selection-background-color: #3B82F6; selection-color: #0B1220;
                 outline: none;
             }
             QComboBox QAbstractItemView::item { padding: 6px 10px; }
-            /* Strong blue hover/selection to replace faint grey */
+            /* Strong blue hover/selection for visibility */
             QComboBox QAbstractItemView::item:hover { background-color: #3B82F6; color: #0B1220; }
             QComboBox QAbstractItemView::item:selected { background-color: #3B82F6; color: #0B1220; }
-            QComboBox::drop-down { width: 26px; border-left: 1px solid #2B323A; }
-            QComboBox QAbstractItemView {
-                background-color: #171A1D; color: #D9E3EA; border: 1px solid #2B323A;
-                selection-background-color: #253349; selection-color: #DDF3FF;
-                outline: none;
+            /* Redundant selectors to overpower platform styles */
+            QComboBox QListView::item:hover { background-color: #3B82F6; color: #0B1220; }
+            QComboBox QListView::item:selected { background-color: #3B82F6; color: #0B1220; }
+            QComboBox QTreeView::item:hover { background-color: #3B82F6; color: #0B1220; }
+            QComboBox QTreeView::item:selected { background-color: #3B82F6; color: #0B1220; }
+
+            /* Transcript format checkboxes: pill stays blue, indicator stays dark with white check */
+            QCheckBox#formatCheckbox:checked { background-color: #3B82F6; color: #0B1220; }
+            QCheckBox#formatCheckbox::indicator { background-color: #0F1113; border: 1px solid #3B82F6; }
+            QCheckBox#formatCheckbox::indicator:hover { border-color: #5B9CF8; }
+            QCheckBox#formatCheckbox::indicator:checked {
+                background-color: #0F1113; /* keep square dark */
+                border-color: #3B82F6;
+                image: url(assets/check_white.svg);
             }
-            QComboBox QAbstractItemView::item { padding: 6px 10px; }
-            QComboBox QAbstractItemView::item:hover { background-color: #1F2937; }
 
             QProgressBar {
                 border: 1px solid #262B31; border-radius: 6px; background-color: #0F1113;

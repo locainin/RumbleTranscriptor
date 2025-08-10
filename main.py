@@ -2,6 +2,11 @@
 import os
 import yt_dlp
 import whisper
+try:
+    import tqdm as _tqdm
+except Exception:  # tqdm may be missing in some environments
+    _tqdm = None
+from contextlib import contextmanager
 import json
 import tempfile
 import subprocess
@@ -101,8 +106,59 @@ def download_video(url, output_dir, download_format_details):
     return downloaded_file_actual_path
 
 
+@contextmanager
+def _whisper_tqdm_bridge(progress_cb):
+    """Temporarily replace tqdm used by Whisper to forward progress to callback.
+
+    progress_cb signature: (percent:int, current:int, total:int)
+    """
+    if _tqdm is None:
+        # No tqdm available; just yield without patching
+        yield
+        return
+    orig_tqdm = _tqdm.tqdm
+    orig_trange = _tqdm.trange
+
+    class _TqdmProxy(orig_tqdm):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._emit()
+
+        def update(self, n=1):
+            res = super().update(n)
+            self._emit()
+            return res
+
+        def set_postfix(self, *args, **kwargs):
+            res = super().set_postfix(*args, **kwargs)
+            self._emit()
+            return res
+
+        def _emit(self):
+            try:
+                total = int(self.total) if self.total else 0
+                n = int(self.n)
+                pct = int((n / total) * 100) if total else 0
+                progress_cb(pct, n, total)
+            except Exception:
+                # Never let UI progress reporting break transcription
+                pass
+
+    def _trange_proxy(*args, **kwargs):
+        return _TqdmProxy(range(*args), **kwargs)
+
+    _tqdm.tqdm = _TqdmProxy
+    _tqdm.trange = _trange_proxy
+    try:
+        yield
+    finally:
+        _tqdm.tqdm = orig_tqdm
+        _tqdm.trange = orig_trange
+
+
 def transcribe(audio_path, model_name='medium', lang='English', formats=None,
-               verbose_transcription=False, start_time=None, end_time=None):
+               verbose_transcription=False, start_time=None, end_time=None,
+               progress_callback=None):
     if not formats:
         formats = ["txt"]
     
@@ -144,7 +200,11 @@ def transcribe(audio_path, model_name='medium', lang='English', formats=None,
                 os.remove(temp_segment)
             raise RuntimeError(f"Failed to extract media segment: {e}")
 
-    result = model.transcribe(audio_to_use, language=lang, verbose=verbose_transcription)
+    if progress_callback:
+        with _whisper_tqdm_bridge(progress_callback):
+            result = model.transcribe(audio_to_use, language=lang, verbose=verbose_transcription)
+    else:
+        result = model.transcribe(audio_to_use, language=lang, verbose=verbose_transcription)
     segments = result.get('segments', [])
     print("Transcription complete.")
 
