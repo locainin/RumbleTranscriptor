@@ -1,0 +1,107 @@
+QWidget {
+    background-color: #111315; color: #E6E6E6;
+    font-size: 15px; font-family: 'Inter', 'SF Pro Text', 'Segoe UI', 'Roboto', 'DejaVu Sans', sans-serif;
+    border: none;
+}
+QLabel#headerTitle {
+    font-size: 20px; font-weight: 600; color: #F2F2F2; margin: 6px 0 2px 0;
+}
+QLabel { color: #B6C2CF; }
+QLabel#mutedLabel { color: #94A3B8; }
+
+QWidget[card="true"] {
+    background-color: #171A1D; border: 1px solid #262B31; border-radius: 10px;
+}
+
+QMenuBar { background-color: #0F1113; color: #9AD7FF; border: none; }
+QMenuBar::item { padding: 6px 10px; background: transparent; border-radius: 6px; }
+QMenuBar::item:selected { background-color: #3B82F6; color: #0B1220; }
+QMenu { background-color: #171A1D; color: #D9E3EA; border: 1px solid #262B31; }
+QMenu::item { padding: 6px 10px; }
+QMenu::item:selected { background-color: #253349; color: #DDF3FF; }
+
+QLineEdit {
+    background: #0F1113; border: 1px solid #2B323A; color: #E6E6E6;
+    padding: 9px 10px; border-radius: 8px; font-size: 14px;
+    selection-background-color: #2B5CFF; selection-color: #FFFFFF;
+}
+QLineEdit:focus { border: 1px solid #3B82F6; }
+
+QPushButton {
+    background-color: #161A1E; color: #D9E3EA; border: 1px solid #2B323A;
+    padding: 10px 16px; border-radius: 8px; font-weight: 600;
+}
+QPushButton:hover { background-color: #1F242A; border-color: #3B82F6; }
+QPushButton:pressed { background-color: #1A2027; }
+QPushButton#primaryButton {
+    background-color: #3B82F6; border: 1px solid #3B82F6; color: #0B1220;
+}
+QPushButton#primaryButton:hover { background-color: #5B9CF8; border-color: #5B9CF8; }
+QPushButton#primaryButton:pressed { background-color: #2F6BD6; }
+
+QPushButton#toggleButton {
+    background: transparent; border: none; color: #9AD7FF; text-align: left;
+    padding: 4px 2px; font-weight: 600;
+}
+QPushButton#toggleButton:hover { color: #DDF3FF; }
+
+/* Improve hover/selection cues in Settings dialog */
+QCheckBox {
+    spacing: 8px; color: #D9E3EA; font-size: 14px; margin-right: 12px;
+    padding: 6px 10px; border-radius: 8px;
+}
+/* Hover state: strong blue like menu */
+QCheckBox:hover { background-color: #3B82F6; color: #0B1220; }
+/* Checked state: blue pill, but keep indicator dark with visible tick */
+QCheckBox:checked { background-color: #3B82F6; color: #0B1220; }
+QCheckBox::indicator {
+    width: 18px; height: 18px; border: 1px solid #2B323A; border-radius: 4px; background-color: #0F1113;
+}
+QCheckBox::indicator:hover { border-color: #3B82F6; }
+/* General indicator when checked (non-format checkboxes) */
+QCheckBox::indicator:checked { background-color: #3B82F6; border-color: #3B82F6; }
+QComboBox:hover { border-color: #3B82F6; }
+QComboBox::drop-down { width: 26px; border-left: 1px solid #2B323A; }
+/* Popup list styling for both list and tree views */
+QComboBox QAbstractItemView {
+    background-color: #171A1D; color: #D9E3EA; border: 1px solid #2B323A;
+    selection-background-color: #3B82F6; selection-color: #0B1220;
+    outline: none;
+}
+QComboBox QAbstractItemView::item { padding: 6px 10px; }
+/* Strong blue hover/selection for visibility */
+QComboBox QAbstractItemView::item:hover { background-color: #3B82F6; color: #0B1220; }
+QComboBox QAbstractItemView::item:selected { background-color: #3B82F6; color: #0B1220; }
+/* Redundant selectors to overpower platform styles */
+QComboBox QListView::item:hover { background-color: #3B82F6; color: #0B1220; }
+QComboBox QListView::item:selected { background-color: #3B82F6; color: #0B1220; }
+QComboBox QTreeView::item:hover { background-color: #3B82F6; color: #0B1220; }
+QComboBox QTreeView::item:selected { background-color: #3B82F6; color: #0B1220; }
+
+/* Transcript format checkboxes: pill stays blue, indicator stays dark with white check */
+QCheckBox#formatCheckbox:checked { background-color: #3B82F6; color: #0B1220; }
+QCheckBox#formatCheckbox::indicator { background-color: #0F1113; border: 1px solid #3B82F6; }
+QCheckBox#formatCheckbox::indicator:hover { border-color: #5B9CF8; }
+QCheckBox#formatCheckbox::indicator:checked {
+    background-color: #0F1113; /* keep square dark */
+    border-color: #3B82F6;
+    image: url(assets/check_white.svg);
+}
+
+/* Keep-media checkbox: match format checkbox indicator with white tick */
+QCheckBox#keepVideoCheckbox:checked { background-color: #3B82F6; color: #0B1220; }
+QCheckBox#keepVideoCheckbox::indicator { background-color: #0F1113; border: 1px solid #3B82F6; }
+QCheckBox#keepVideoCheckbox::indicator:hover { border-color: #5B9CF8; }
+QCheckBox#keepVideoCheckbox::indicator:checked {
+    background-color: #0F1113; /* keep square dark */
+    border-color: #3B82F6;
+    image: url(assets/check_white.svg);
+}
+
+QProgressBar {
+    border: 1px solid #262B31; border-radius: 6px; background-color: #0F1113;
+    height: 10px;
+}
+QProgressBar::chunk { background-color: #3B82F6; border-radius: 6px; }
+
+QDialog { background-color: #111315; border: 1px solid #262B31; }
