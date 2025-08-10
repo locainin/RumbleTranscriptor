@@ -122,10 +122,12 @@ class SettingsDialog(QDialog):
         
         form_layout = QFormLayout(self)
 
+        # Keep video
         self.keep_video_checkbox = QCheckBox("Keep downloaded file after transcription")
         self.keep_video_checkbox.setChecked(self.settings.value("keepVideo", True, type=bool))
         form_layout.addRow(self.keep_video_checkbox)
 
+        # Download format
         self.download_format_label = QLabel("Download Format:")
         self.download_format_combo = QComboBox()
         current_dl_format_id = self.settings.value("downloadFormatID", DEFAULT_DOWNLOAD_FORMAT_ID, type=str)
@@ -136,6 +138,13 @@ class SettingsDialog(QDialog):
                 default_dl_idx = idx
         self.download_format_combo.setCurrentIndex(default_dl_idx)
         form_layout.addRow(self.download_format_label, self.download_format_combo)
+
+        # Force a QListView for the popup and enable hover tracking so :hover actually triggers
+        from PyQt5.QtWidgets import QListView
+        dl_view = QListView()
+        dl_view.setMouseTracking(True)
+        dl_view.viewport().setAttribute(Qt.WA_Hover, True)
+        self.download_format_combo.setView(dl_view)
 
         # Whisper model selection
         self.model_label = QLabel("Default Whisper Model:")
@@ -148,6 +157,12 @@ class SettingsDialog(QDialog):
                 model_default_idx = idx
         self.model_combo.setCurrentIndex(model_default_idx)
         form_layout.addRow(self.model_label, self.model_combo)
+
+        # Force a QListView and hover tracking here too
+        model_view = QListView()
+        model_view.setMouseTracking(True)
+        model_view.viewport().setAttribute(Qt.WA_Hover, True)
+        self.model_combo.setView(model_view)
 
         # Output formats selection
         self.output_formats_label = QLabel("Transcript Formats:")
@@ -164,6 +179,7 @@ class SettingsDialog(QDialog):
             cb.setChecked(fmt in saved_formats)
         form_layout.addRow(self.output_formats_label, self.output_formats_container)
 
+        # Bottom buttons
         button_layout = QHBoxLayout()
         spacer = QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum)
         button_layout.addSpacerItem(spacer)
@@ -171,9 +187,9 @@ class SettingsDialog(QDialog):
         save_button = QPushButton("Save & Close")
         save_button.clicked.connect(self.save_settings)
         button_layout.addWidget(save_button)
-        
         form_layout.addRow(button_layout)
 
+        # Inherit parent stylesheet so our popup rules apply
         if parent:
             self.setStyleSheet(parent.styleSheet())
 
